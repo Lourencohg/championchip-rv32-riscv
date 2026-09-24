@@ -1,7 +1,6 @@
 # Contratos de Interface entre Módulos
 
-Entregável da S1. Registra as decisões que atravessam fronteira entre módulos — aquelas em que
-duas pessoas podem implementar algo correto isoladamente e que não funciona junto.
+Esse arquvo registra as decisões acerca da comnicação de fronteira entre módulos.
 
 Cada contrato tem um dono. Mudança em qualquer um deles exige aviso aos afetados **antes** do commit.
 
@@ -19,14 +18,12 @@ de write-back — é o mesmo fio.
 
 **Afeta:** Lourenço (PC, unidade de controle), Felipe (o valor de retorno do JAL/JALR é `PC+4`, não `PC`).
 
-**Alternativa descartada:** registrador `pc_old` carregado na busca. Funciona, mas cria um 35º
-registrador fora da lista da seção 3.1.4 do Block Guide.
 
 ---
 
 ## B1 — Não existem registradores intermediários
 
-**Decidido.** Não há ALUOut nem MDR. O caminho execute → write-back é combinacional, portanto a
+<!-- **Decidido.** Não há ALUOut nem MDR. O caminho execute → write-back é combinacional, portanto a 
 unidade de controle **mantém** os seletores da ULA, do multiplicador, do CRC e da memória durante
 os estados de write-back.
 
@@ -39,43 +36,43 @@ apresentado durante o write-back.
 **Por que isso é crítico.** Se um módulo registrar sua saída e a unidade de controle assumir que não,
 os dois passam em seus testbenches isolados e falham juntos na integração — com sintoma de "o
 registrador recebeu o valor errado", que parece bug da ULA.
-
+--> 
 ---
 
 ## C — Geração do byte write
 
-**Decidido.** `bw_o` é gerado pela **LSU**, não pela unidade de controle.
+<!-- **Decidido.** `bw_o` é gerado pela **LSU**, não pela unidade de controle.
 
 **Base:** seção 3.3.2 do Block Guide afirma que "a LSU emite um sinal chamado *byte write*, de 4
 bits". A própria LSU usa os 2 bits inferiores do endereço para reposicionar o dado.
 
 **Afeta:** Maia.
-
+-->
 ---
 
 ## D — Seleção do formato de imediato
 
-**Decidido.** Não existe sinal `imm_sel`. O extensor de imediatos decodifica o opcode sozinho.
+<!-- **Decidido.** Não existe sinal `imm_sel`. O extensor de imediatos decodifica o opcode sozinho.
 
 **Base:** seção 3.1.5 do Block Guide.
 
 **Afeta:** Felipe.
-
+-->
 ---
 
 ## E — Proteção do registrador x0
-
+<!--
 **Decidido.** x0 é protegido **dentro do banco de registradores**. A unidade de controle afirma
 `reg_write` sem verificar `rd`.
 
 **Base:** seção 3.1.4 do Block Guide — x0 é hardwired em zero.
 
 **Afeta:** Felipe. Vetor de teste útil: `lw x0, 0(x2)`, que exercita exatamente essa guarda.
-
+-->
 ---
 
 ## F — op_size: unidade de controle → LSU
-
+<!--
 **Decidido.** Passthrough puro do `funct3`. Tamanho em `[1:0]`, extensão de zeros em `[2]`:
 
 | valor | instrução |
@@ -88,7 +85,7 @@ bits". A própria LSU usa os 2 bits inferiores do endereço para reposicionar o 
 
 **Base:** a porta `op_size_o [2:0]` é fixada pela Figura 3 do Block Guide, mas a **codificação não é
 publicada**. Esta é escolha da equipe.
-
+-->
 **Afeta:** Maia (LSU), Lourenço (unidade de controle).
 
 ---
@@ -96,10 +93,6 @@ publicada**. Esta é escolha da equipe.
 ## G — Largura dos seletores da ULA
 
 **Decidido.** `alu_src_a` e `alu_src_b` têm **1 bit cada**.
-
-Nenhuma das 47 instruções usa uma entrada com a constante zero no operando A (o LUI foi resolvido
-com `ALU_PASS_B`). E a entrada com a constante 4 no operando B só existiria se o `+4` passasse pela
-ULA — sob A1 ele não passa.
 
 **Afeta:** Gabriel (portas da ULA), Felipe (muxes do datapath), Lourenço.
 
@@ -123,9 +116,7 @@ essa escolha. Uma porta separada não teria por onde recebê-lo.
 
 ## I — Codificação da ULA
 
-**Fixada pelo Block Guide, Tabela 9.** Não é decisão da equipe, mas está aqui porque é a colisão
-mais fácil de acontecer: a numeração do exemplo `RISCV_CONTROL` do ChipInventor é **outra**
-(`ADD = 3'b000`), e ele é a referência mais óbvia à mão.
+**Fixada pelo Block Guide, Tabela 9.** 
 
 | valor | operação | | valor | operação |
 |---|---|---|---|---|
@@ -136,23 +127,20 @@ mais fácil de acontecer: a numeração do exemplo `RISCV_CONTROL` do ChipInvent
 | `4'h4` | OR | | `4'hA` | SLTU |
 | `4'h5` | XOR | | | |
 
-Use as macros `` `ALU_ADD ``, `` `ALU_SUB `` etc. do `rvbl2_defines.vh`. Nunca escreva o número direto.
-
 ---
 
 ## J — Política para opcode ilegal
-
+<!--
 **Decidido.** No-op silencioso que avança o PC. O Block Guide não pede trap de instrução ilegal e a
 tabela de cobertura das 47 instruções não tem linha para isso.
-
+-->
 ---
 
 ## K — ECALL e EBREAK
 
 **Decidido provisoriamente.** Ambos levam o núcleo ao estado de parada (`halt`).
 
-**A confirmar** quando a firmware oficial de validação for publicada. Se ela não esperar parada no
-ECALL, revisar — a mudança é de uma linha na FSM.
+**A confirmar** 
 
 ---
 
@@ -174,9 +162,5 @@ Se a IMEM for síncrona, a busca passa a ocupar dois estados e **todas as contag
 | jump | 4 |
 
 ---
-
-## Histórico
-
-| Data | Contrato | Alteração |
 |---|---|---|
 | — | A1, B1, C, D, E, F, G, H, I, J, K | Registro inicial |
