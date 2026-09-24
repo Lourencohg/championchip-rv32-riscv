@@ -57,10 +57,6 @@ Antes de alterar valores no arquivo defines as mudanças precisam do aval de tod
 Estão registradas em [`docs/CONTRATOS.md`](docs/CONTRATOS.md) e resumidas na seção 12 do
 `rvbl2_defines.vh`. As duas que mais afetam outros módulos:
 
-- **A1** — o PC guarda o endereço *da instrução* durante toda a execução dela; o `+4` vem de um
-  somador dedicado, fora da ULA.?
-- **B1** — não existem registradores intermediários (ALUOut / MDR); o caminho execute → write-back
-  é combinacional.
 
 ## Referências
 
