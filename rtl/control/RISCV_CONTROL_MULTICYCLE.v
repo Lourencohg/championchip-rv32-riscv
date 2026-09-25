@@ -1,44 +1,18 @@
-//==============================================================================
 // RISCV_CONTROL_MULTICYCLE
-//
-// Unidade de controle multiciclo para o nucleo RVBL-2 (RV32I_Zmmul_Xicrc).
-// Escrita a partir do exemplo RISCV_CONTROL do ChipInventor, mas com a
-// diferenca estrutural que define o projeto: aqui existe ESTADO.
-//
-// DECISOES DE PROJETO ADOTADAS (as duas que ficaram abertas na planilha):
-//
-//   A1 - O PC guarda o endereco DA INSTRUCAO durante toda a execucao dela.
-//        O incremento NAO acontece no FETCH; o PC e escrito no ULTIMO estado
-//        de cada instrucao. Isso exige, no datapath:
-//          * um somador dedicado PC+4 (constante 4, nao passa pela ULA);
-//          * a saida desse somador ligada a entrada 00 do mux do PC
-//            E TAMBEM a entrada 4 do mux de write-back (endereco de retorno).
-//        ATENCAO: na legenda da planilha, result_src=4 estava descrito como
-//        "PC". Com A1 passa a ser "PC+4". E o mesmo fio do pc_src=00.
-//        Consequencia: alu_src_a e alu_src_b tem 1 bit cada (a entrada zero
-//        e a entrada constante-4 nao sao usadas por nenhuma das 47).
-//
-//   Sobre a interface com a LSU (Figura 3 do guia):
-//     * o_Op_Size [2:0] E uma porta fixada pelo guia (op_size_o) e VAI daqui
-//       para a LSU. Adotado: passthrough de funct3, que ja codifica tamanho e
-//       sinal (000=b 001=h 010=w 100=bu 101=hu). Confirmar a codificacao com
-//       quem escrever a LSU - o guia nao publica tabela para este campo.
-//     * bw_o (byte write) NAO sai daqui. A secao 3.3.2 diz textualmente que
-//       "a LSU emite um sinal chamado byte write", e a propria LSU usa os 2
+
+// DECISOES DE PROJETO:
+//    interface com a LSU (Figura 3 do guia):
+
+//    o_Op_Size [2:0] E uma porta fixada pelo guia (op_size_o) e VAI daqui para a LSU. Adotado: passthrough de funct3, que ja codifica tamanho e
+//       sinal (000=b 001=h 010=w 100=bu 101=hu). Confirmar a codificacao com quem escrever a LSU - o guia nao publica tabela para este campo.
+
+
+//    bw_o (byte write) NAO sai daqui. A secao 3.3.2 diz textualmente que "a LSU emite um sinal chamado byte write", e a propria LSU usa os 2
 //       bits inferiores do endereco para isso. Nao replicar essa logica aqui.
-//     * imm_sel tambem nao existe: a secao 3.1.5 diz que o extensor de
+
+
+//    imm_sel tambem nao existe: a secao 3.1.5 diz que o extensor de
 //       imediatos decodifica o opcode sozinho.
-//
-//   B1 - NAO existem registradores intermediarios (ALUOut / MDR).
-//        O caminho EX->WB e combinacional, entao os seletores da ULA, do MULT,
-//        do CRC e da memoria sao MANTIDOS durante os estados de write-back.
-//        Se voce decidir por B2 (com ALUOut e MDR), veja o comentario
-//        marcado [B2] em cada estado WB: basta apagar as linhas indicadas.
-//
-// Reset e SINCRONO (sem "or posedge i_Rst" na lista de sensibilidade).
-// O valor inicial do PC (0x00400000, base da IMEM - Tabela 13 do guia) e
-// responsabilidade do registrador PC, nao desta unidade.
-//==============================================================================
 
 `timescale 1ns / 1ps
 
@@ -46,54 +20,49 @@
 
 module RISCV_CONTROL_MULTICYCLE (
     input             i_Clk,
-    input             i_Rst,            // reset sincrono, ativo em 1
-    input      [31:0] i_Instruction,    // saida do IR
-    input             i_Branch_Taken,   // do comparador de branch (combinacional)
+    input             i_Rst,            // reset sincrono ativo em 1
+    input      [31:0] i_Instruction,    //saida do IR
+    input             i_Branch_Taken,   // comparador de branch
 
-    output reg        o_PC_Write,       // habilita escrita no PC
+    output reg        o_PC_Write,       // habilita escrita PC
     output reg [1:0]  o_PC_Sel,         // 00=PC+4  01=alvo  10=alvo JALR
     output reg        o_IR_Write,       // captura a instrucao no IR
     output reg        o_Addr_Sel,       // 0=PC  1=saida da ULA
     output reg        o_Mem_Read,       // oe_o
     output reg        o_Mem_Write,      // we_o
-    output reg        o_ALU_A_Sel,      // 0=rs1  1=PC
-    output reg        o_ALU_B_Sel,      // 0=rs2  1=imediato
+    output reg        o_ALU_A_Sel,      // 0=rs1  1=PC <- de onde vai para a ALU
+    output reg        o_ALU_B_Sel,      // 0=rs2  1=imediato <- de onde vai para a ALU
     output reg [3:0]  o_ALU_Op,         // Tabela 9 do Block Guide
-    output reg [3:0]  o_Mult_Op,        // Tabela 10
-    output reg [3:0]  o_CRC_Op,         // Tabela 11
+    output reg [3:0]  o_Mult_Op,        
+    output reg [3:0]  o_CRC_Op,         
     output reg [2:0]  o_Result_Sel,     // 0=ULA 1=MULT 2=CRC 3=LSU 4=PC+4
     output reg [2:0]  o_Op_Size,        // op_size_o -> LSU (Figura 3)
     output reg        o_Mult_En,        // habilita o multiplicador
-    output reg        o_CRC_En,         // habilita o bloco de CRC
+    output reg        o_CRC_En,         // habilita bloco de CRC
     output reg        o_Reg_Write,
     output reg        o_Halt,
 
-    output     [4:0]  o_State           // so para depuracao / waveform
+    output     [4:0]  o_State           // só para depuracao
 );
 
-    //--------------------------------------------------------------------------
     // Todas as constantes vem de rvbl2_defines.vh. Nenhuma e redefinida aqui.
-    //--------------------------------------------------------------------------
 
     reg [4:0] r_State, w_Next_State;
     assign o_State = r_State;
 
-    //--------------------------------------------------------------------------
+//----------------------------------------------------------------------------------------------
+
     // 1. CAMPOS DA INSTRUCAO
-    //--------------------------------------------------------------------------
+    
     wire [6:0] w_Opcode = i_Instruction[6:0];
     wire [2:0] w_Funct3 = i_Instruction[14:12];
     wire [6:0] w_Funct7 = i_Instruction[31:25];
     wire       w_Bit30  = i_Instruction[30];   // funct7[5]
     wire [11:0] w_Funct12 = i_Instruction[31:20]; // separa ECALL de EBREAK
 
-    //--------------------------------------------------------------------------
-    // 5. CLASSIFICACAO DA INSTRUCAO
-    //
-    // ARMADILHA: MUL e CRC usam o MESMO opcode 0110011 do ADD, e ate o mesmo
-    // funct3. So o funct7 separa os tres. A categoria ALU tem de ser o ELSE,
-    // nunca "funct7 == 0000000" - senao SUB (0100000) e SRA quebram em silencio.
-    //--------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------
+    // CLASSIFICACAO DA INSTRUCAO
     wire w_Is_R      = (w_Opcode == `OP_RTYPE);
     wire w_Is_Mul    = w_Is_R && (w_Funct7 == `F7_MUL);
     wire w_Is_Crc    = w_Is_R && (w_Funct7 == `F7_CRC);
@@ -121,30 +90,25 @@ module RISCV_CONTROL_MULTICYCLE (
                           w_Is_Branch || w_Is_Jal || w_Is_Jalr || w_Is_Lui ||
                           w_Is_Auipc  || w_Is_System || w_Is_Fence;
 
-    //--------------------------------------------------------------------------
-    // 6. DECODIFICACAO DOS SINAIS "dec" DA PLANILHA
-    //
-    // Estes valores dependem so da instrucao, nao do estado. Sao calculados
-    // uma vez e usados tanto no estado EX quanto no WB (por causa da decisao
-    // B1). E o equivalente em RTL da aba "Decodificacao por Instrucao".
-    //--------------------------------------------------------------------------
-    reg [3:0] w_ALU_Op_Dec;   // "reg" em always @(*) = logica combinacional
+
+//----------------------------------------------------------------------------------------------
+    // Signal decoder "dec" DA PLANILHA
+    // Estes valores dependem da instrucao, nao do estado. Sendo calculados uma vez e usados tanto no estado EX quanto no WB 
+    
+    reg [3:0] w_ALU_Op_Dec;   // "reg" em always @(*) 
     always @(*) begin
         if (w_Is_Lui) begin
             w_ALU_Op_Dec = `ALU_PASS_B;         // LUI: a saida e o proprio imediato
         end
         else if (w_Is_Alu_R || w_Is_Alu_I) begin
             case (w_Funct3)
-                // ADD/SUB: o bit 30 so vale para R-type. Em ADDI esse bit faz
-                // parte do imediato - se nao houvesse o "w_Is_Alu_R &&",
-                // addi com imediato negativo viraria uma subtracao.
+                // ADD/SUB: o bit 30 so vale para R-type. Em ADDI esse bit faz parte do imediato - se nao houvesse o "w_Is_Alu_R &&", addi com imediato negativo viraria uma subtracao.
                 3'b000:  w_ALU_Op_Dec = (w_Is_Alu_R && w_Bit30) ? `ALU_SUB : `ALU_ADD;
                 3'b001:  w_ALU_Op_Dec = `ALU_SLL;
                 3'b010:  w_ALU_Op_Dec = `ALU_SLT;
                 3'b011:  w_ALU_Op_Dec = `ALU_SLTU;
                 3'b100:  w_ALU_Op_Dec = `ALU_XOR;
-                // SRL/SRA: aqui o bit 30 vale para OS DOIS tipos, porque
-                // SRAI tambem o usa (o shamt ocupa so 5 bits do imediato).
+                // SRL/SRA o bit 30 vale para OS DOIS tipos, porque SRAI tambem o usa (o shamt ocupa so 5 bits do imediato).
                 3'b101:  w_ALU_Op_Dec = w_Bit30 ? `ALU_SRA : `ALU_SRL;
                 3'b110:  w_ALU_Op_Dec = `ALU_OR;
                 3'b111:  w_ALU_Op_Dec = `ALU_AND;
@@ -152,7 +116,7 @@ module RISCV_CONTROL_MULTICYCLE (
             endcase
         end
         else begin
-            // AUIPC, loads, stores, branches e jumps: a ULA sempre soma.
+            // AUIPC, loads, stores, branches e jumps a ULA sempre soma.
             w_ALU_Op_Dec = `ALU_ADD;
         end
     end
@@ -171,17 +135,19 @@ module RISCV_CONTROL_MULTICYCLE (
     // Fonte do PC nos saltos: JALR precisa da entrada que zera o bit 0.
     wire [1:0] w_PC_Sel_Jump = w_Is_Jalr ? `PC_SRC_JALR : `PC_SRC_TARGET;
 
-    //--------------------------------------------------------------------------
-    // 7. REGISTRADOR DE ESTADO  (unico bloco sequencial)
-    //--------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------
+    // REGISTRADOR DE ESTADO
+
     always @(posedge i_Clk) begin
         if (i_Rst) r_State <= `ST_FETCH;
         else       r_State <= w_Next_State;
     end
 
-    //--------------------------------------------------------------------------
-    // 8. PROXIMO ESTADO  (combinacional)
-    //--------------------------------------------------------------------------
+
+//----------------------------------------------------------------------------------------------
+    // NEXT STATE (combinacional)
+    
     always @(*) begin
         w_Next_State = `ST_FETCH;   // default: nenhum caminho fica sem atribuicao
         case (r_State)
@@ -196,8 +162,7 @@ module RISCV_CONTROL_MULTICYCLE (
                 else if (w_Is_Branch)               w_Next_State = `ST_BRANCH;
                 else if (w_Is_Jal   || w_Is_Jalr)   w_Next_State = `ST_JUMP;
                 else                                w_Next_State = `ST_SYSTEM;
-                // O else cobre FENCE, ECALL, EBREAK e qualquer opcode ilegal
-                // (ver w_Opcode_Legal, usado so para documentar a politica).
+                
             end
 
             `ST_EX_ALU:    w_Next_State = `ST_WB_ALU;
@@ -225,13 +190,10 @@ module RISCV_CONTROL_MULTICYCLE (
         endcase
     end
 
-    //--------------------------------------------------------------------------
-    // 9. SAIDAS  (combinacional, funcao do estado)
-    //
-    // Todo sinal recebe valor default ANTES do case. Isso e o que impede a
-    // sintese de inferir latch - e o equivalente em RTL da regra "nenhuma
-    // celula pode ficar em branco" da planilha.
-    //--------------------------------------------------------------------------
+
+    // SAIDAS  (combinacional, funcao do estado)
+    
+   
     always @(*) begin
         o_PC_Write   = 1'b0;
         o_PC_Sel     = `PC_SRC_PLUS4;
