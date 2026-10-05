@@ -14,7 +14,6 @@
 //    imm_sel tambem nao existe: a secao 3.1.5 diz que o extensor de
 //       imediatos decodifica o opcode sozinho.
 
-`timescale 1ns / 1ps
 
 `include "rvbl2_defines.vh"
 
